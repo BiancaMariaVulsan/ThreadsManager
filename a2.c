@@ -5,33 +5,39 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <fcntl.h> 
 #include <stdbool.h>
 #include "a2_helper.h"
 
 #define MAX_TH_P2 5
 #define MAX_TH_P8 43
+#define MAX_TH_P3 6
 
 pthread_mutex_t lock1;
 pthread_mutex_t lock2;
 pthread_cond_t cond1;
 pthread_cond_t cond2;
+pthread_cond_t condT5_beg;
 pthread_cond_t cond_end;
 pthread_cond_t cond_beg;
-bool ready = false;
+bool T3beg = false;
+bool T5end = false;
 int th_count = 0;
 int th_no = MAX_TH_P8;
 sem_t sem;
 sem_t barrier;
+
+sem_t *semT21_beg;
+sem_t *semT21_end;
+
 bool T11beg = false;
 bool T11end = false;
 
-// decrement by 1 the semaphore sem_no in the semaphore set sem_id
 void P(sem_t *sem)
 {
     sem_wait(sem);
 }
 
-// increment by 1 the semaphore sem_no in the semaphore set sem_id
 void V(sem_t *sem)
 {
     sem_post(sem);
@@ -47,17 +53,38 @@ void* thread_function_P2(void* arg) {
     return 0;
 }
 
+void* thread_1_function_P2(void* arg) {
+    int th_id = *((int*) arg);
+
+    sem_wait(semT21_beg);
+    info(BEGIN, 2, th_id);
+
+    info(END, 2, th_id);
+
+    sem_post(semT21_end);
+
+    return 0;
+}
+
 void* thread_3_function_P2(void* arg) {
     int th_id = *((int*) arg);
 
     info(BEGIN, 2, th_id);
+
+    pthread_mutex_lock(&lock1);
+    T3beg = true;
+    if (pthread_cond_signal(&condT5_beg) != 0) {
+        perror("Cannot signal the condition waiters");
+        exit(3);
+    }
+    pthread_mutex_unlock(&lock1);
 
     if (pthread_mutex_lock(&lock1) != 0) {
         perror("Cannot take the lock");
         exit(4);
     }
 
-    while (ready != true) {
+    while (T5end != true) {
         if (pthread_cond_wait(&cond1, &lock1) != 0) {
             perror("Cannot wait for condition");
             exit(2);
@@ -77,6 +104,15 @@ void* thread_3_function_P2(void* arg) {
 void* thread_5_function_P2(void* arg) {
     int th_id = *((int*) arg);
 
+    pthread_mutex_lock(&lock1);
+    while(T3beg != true) {
+        if (pthread_cond_wait(&condT5_beg, &lock1) != 0) {
+            perror("Cannot wait for condition");
+            exit(2);
+        }
+    }
+    pthread_mutex_unlock(&lock1);
+
     info(BEGIN, 2, th_id);
     
     if (pthread_mutex_lock(&lock1) != 0) {
@@ -84,9 +120,9 @@ void* thread_5_function_P2(void* arg) {
         exit(4);
     }
 
-    ready = true;
+    T5end = true;
 
-    if (pthread_cond_signal(&cond1)  != 0) {
+    if (pthread_cond_signal(&cond1) != 0) {
         perror("Cannot signal the condition waiters");
         exit(3);
     }
@@ -105,10 +141,18 @@ void create_threads_P2() {
     pthread_t th[MAX_TH_P2 + 1];
     int th_args[MAX_TH_P2 + 1];
 
+    semT21_beg = sem_open("/semT21_beg\0", O_CREAT, 0644, 0);
+    semT21_end = sem_open("/semT21_end\0", O_CREAT, 0644, 0);
+
     // Create the N threads
     for (int i=1; i<=MAX_TH_P2; i++) {
     	th_args[i] = i;
-        if(i == 3) {
+        if(i == 1) {
+            if (pthread_create(&th[i], NULL, thread_1_function_P2, &th_args[i]) != 0) {
+                perror("Cannot create threads");
+                exit(1);
+            }
+        } else if(i == 3) {
             if (pthread_create(&th[i], NULL, thread_3_function_P2, &th_args[i]) != 0) {
                 perror("Cannot create threads");
                 exit(1);
@@ -126,10 +170,13 @@ void create_threads_P2() {
         }
     }
 
-     // Wait for the termination of the N threads created
+    // Wait for the termination of the N threads created
     for (int i=1; i<=MAX_TH_P2; i++) {
         pthread_join(th[i], NULL);
     }
+
+    sem_close(semT21_beg);
+    sem_close(semT21_end);
 }
 
 void* thread_8_function_P11(void* arg) {
@@ -209,7 +256,7 @@ void* thread_function_P8(void* arg) {
     pthread_cond_broadcast(&cond_beg);
     info(END, 8, th_id);
     pthread_mutex_unlock(&lock2);
-    V(&sem);
+    // V(&sem);
 
     return 0;
 }
@@ -254,6 +301,95 @@ void create_threads_P8() {
     sem_destroy(&barrier);
 }
 
+void* thread_function_P3(void* arg) {
+    int th_id = *((int*) arg);
+
+    // if(th_id == 6) {
+    //     sem_wait(semT21_end);
+    // }
+
+    info(BEGIN, 3, th_id);
+
+    info(END, 3, th_id);
+
+    // if(th_id == 5) {
+    //     sem_post(semT21_beg);
+    // }
+
+    return 0;
+}
+
+void* thread_5_function_P3(void* arg) {
+    int th_id = *((int*) arg);
+
+    info(BEGIN, 3, th_id);
+    // printf("runnind %d\n", th_id);
+    info(END, 3, th_id);
+    sem_post(semT21_beg);
+
+    return 0;
+}
+
+
+void* thread_6_function_P3(void* arg) {
+    int th_id = *((int*) arg);
+
+    sem_wait(semT21_end);
+    info(BEGIN, 3, th_id);
+
+    info(END, 3, th_id);
+
+    return 0;
+}
+
+void create_threads_P3() {
+    pthread_t th[MAX_TH_P3 + 1];
+    int th_args[MAX_TH_P3 + 1];
+
+    // Create named semaphores
+    semT21_beg = sem_open("/semT21_beg\0", O_CREAT, 0644, 0);
+    semT21_end = sem_open("/semT21_end\0", O_CREAT, 0644, 0);
+
+    if(semT21_beg == SEM_FAILED){
+        printf("Sem not initialized\n");
+        return;
+    }
+
+    if(semT21_end == SEM_FAILED){
+        printf("Sem not initialized\n");
+        return;
+    }
+
+    // Create the N threads
+    for (int i=1; i<=MAX_TH_P3; i++) {
+    	th_args[i] = i;
+        if(i == 5) {
+            if (pthread_create(&th[i], NULL, thread_5_function_P3, &th_args[i]) != 0) {
+                perror("Cannot create threads");
+                exit(1);
+            }
+        } else if(i == 6) {
+            if (pthread_create(&th[i], NULL, thread_6_function_P3, &th_args[i]) != 0) {
+                perror("Cannot create threads");
+                exit(1);
+            }
+        } else {
+            if (pthread_create(&th[i], NULL, thread_function_P3, &th_args[i]) != 0) {
+                perror("Cannot create threads");
+                exit(1);
+            }
+        }
+    }
+
+    // Wait for the termination of the N threads created
+    for (int i=1; i<=MAX_TH_P3; i++) {
+        pthread_join(th[i], NULL);
+    }
+
+    sem_close(semT21_beg);
+    sem_close(semT21_end);
+}
+
 int main(){
     init();
 
@@ -275,6 +411,7 @@ int main(){
         if(pid3 == 0) {
             info(BEGIN, 3, 0);
             // pid3 = getpid();
+            create_threads_P3();
 
             // P8
             pid8 = fork();
@@ -334,5 +471,7 @@ int main(){
             }
         }
     }
+    sem_unlink("/semT21_beg\0");
+    sem_unlink("/semT21_end\0");
     return 0;
 }
